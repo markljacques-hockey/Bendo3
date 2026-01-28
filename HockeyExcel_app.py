@@ -198,27 +198,38 @@ if uploaded_file is not None:
         fair_score_a = get_top_n_score(team_a, common_count)
         fair_score_b = get_top_n_score(team_b, common_count)
 
-        # --- 9. DISPLAY ---
+        # --- 9. DISPLAY (UPDATED WITH POSITION COUNTS) ---
         if st.button("Shuffle Teams Again"):
             st.rerun()
             
         cols = ['Full Name', 'Position']
         col1, col2 = st.columns(2)
+        
         with col1:
             st.header(f"🔴 Red Team")
+            # Calculate Position Counts
+            cnt_d_a = len(team_a[team_a['Position'] == 'D'])
+            cnt_f_a = len(team_a[team_a['Position'] == 'F'])
+            
             st.write(f"**Total Score:** {total_score_a}")
             if common_count > 0:
                 st.write(f"**Top {common_count} Score:** {fair_score_a}")
-            st.write(f"Players: {len(team_a)}")
+            st.write(f"Players: {len(team_a)} **({cnt_d_a} D / {cnt_f_a} F)**")
+            
             if not team_a.empty: st.dataframe(team_a[cols], hide_index=True)
             else: st.write("No players.")
                 
         with col2:
             st.header(f"⚪ White Team")
+            # Calculate Position Counts
+            cnt_d_b = len(team_b[team_b['Position'] == 'D'])
+            cnt_f_b = len(team_b[team_b['Position'] == 'F'])
+            
             st.write(f"**Total Score:** {total_score_b}")
             if common_count > 0:
                 st.write(f"**Top {common_count} Score:** {fair_score_b}")
-            st.write(f"Players: {len(team_b)}")
+            st.write(f"Players: {len(team_b)} **({cnt_d_b} D / {cnt_f_b} F)**")
+            
             if not team_b.empty: st.dataframe(team_b[cols], hide_index=True)
             else: st.write("No players.")
 
