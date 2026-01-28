@@ -198,7 +198,7 @@ if uploaded_file is not None:
         fair_score_a = get_top_n_score(team_a, common_count)
         fair_score_b = get_top_n_score(team_b, common_count)
 
-        # --- 9. DISPLAY (UPDATED WITH POSITION COUNTS) ---
+        # --- 9. DISPLAY (WITH POSITION COUNTS) ---
         if st.button("Shuffle Teams Again"):
             st.rerun()
             
@@ -259,7 +259,10 @@ if uploaded_file is not None:
             email_body = f"""Hello everyone,\n\nHere are the rosters for the upcoming game:\n\n{format_team_list(team_a, "RED TEAM")}\n{format_team_list(team_b, "WHITE TEAM")}\nKeep your sticks on the ice!"""
             st.text_area("Email Text (Draft Only - Scores/Cuts Hidden):", value=email_body, height=300)
 
-            safe_subject = urllib.parse.quote("Bendo Hockey Lineups")
+            # Updated Subject Line Logic
+            subject_line = f"Bendo Hockey Lineups - {selected_sheet}"
+            
+            safe_subject = urllib.parse.quote(subject_line)
             safe_body = urllib.parse.quote(email_body)
             safe_bcc = urllib.parse.quote(bcc_string)
             mailto_url = f"mailto:?bcc={safe_bcc}&subject={safe_subject}&body={safe_body}"
