@@ -45,8 +45,8 @@ def format_team_list(df, team_name):
 st.title("🏒 Hockey Team Generator")
 st.write("Upload your Excel player sheet. Logic: Fills 12 F / 8 D. If >20 players, adds to Forwards first (max 18), then Defense (max 12).")
 
-# File Uploader
-uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls'])
+# File Uploader (Supports .xlsx, .xls, and .xlsm)
+uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls', 'xlsm'])
 
 if uploaded_file is not None:
     try:
