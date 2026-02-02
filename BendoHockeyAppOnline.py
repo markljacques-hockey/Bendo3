@@ -12,6 +12,7 @@ def snake_draft(players):
     players = players.reset_index(drop=True)
     
     for i, (_, player) in enumerate(players.iterrows()):
+        # Pattern: A, B, B, A
         if i % 4 == 0 or i % 4 == 3:
             team_a.append(player)
         else:
@@ -39,82 +40,6 @@ def format_team_list(df, team_name):
 def get_top_n_score(df, n):
     if df.empty or n <= 0: return 0
     return df.sort_values(by='Score', ascending=False).head(n)['Score'].sum()
-
-def enforce_rivalries(df_a, df_b):
-    """Ensures specific pairs are not on the same team."""
-    pairs = [
-        ("Mike Tonietto", "Jamie Devin"),
-        ("Mark Hicks", "Gary Fera")
-    ]
-    
-    logs = []
-
-    for p1, p2 in pairs:
-        # Create temp lower-case columns for matching
-        df_a['Name_Lower'] = df_a['Full Name'].astype(str).str.lower().str.strip()
-        df_b['Name_Lower'] = df_b['Full Name'].astype(str).str.lower().str.strip()
-        
-        p1_key = p1.lower().strip()
-        p2_key = p2.lower().strip()
-        
-        p1_in_a = not df_a[df_a['Name_Lower'] == p1_key].empty
-        p1_in_b = not df_b[df_b['Name_Lower'] == p1_key].empty
-        p2_in_a = not df_a[df_a['Name_Lower'] == p2_key].empty
-        p2_in_b = not df_b[df_b['Name_Lower'] == p2_key].empty
-        
-        # Only proceed if BOTH are playing
-        if (p1_in_a or p1_in_b) and (p2_in_a or p2_in_b):
-            collision = False
-            team_with_both = None
-            other_team = None
-            
-            if p1_in_a and p2_in_a:
-                collision = True
-                team_with_both = df_a
-                other_team = df_b
-            elif p1_in_b and p2_in_b:
-                collision = True
-                team_with_both = df_b
-                other_team = df_a
-            
-            if collision:
-                # Find P2 and Swap
-                p2_row = team_with_both[team_with_both['Name_Lower'] == p2_key].iloc[0]
-                p2_pos = p2_row['Position']
-                
-                # Find candidate in other team (same pos, avoid other rivals)
-                protected = [x.lower() for x in [p1, p2] + [n for pair in pairs for n in pair]]
-                candidates = other_team[
-                    (other_team['Position'] == p2_pos) & 
-                    (~other_team['Name_Lower'].isin(protected))
-                ]
-                
-                if candidates.empty:
-                    candidates = other_team[other_team['Position'] == p2_pos]
-                
-                if not candidates.empty:
-                    swap_target = candidates.iloc[-1] # Swap lowest ranked if possible
-                    
-                    # Remove
-                    team_with_both = team_with_both[team_with_both['Name_Lower'] != p2_key]
-                    other_team = other_team[other_team['Name_Lower'] != swap_target['Name_Lower']]
-                    
-                    # Add (Convert Series to DataFrame before concat to avoid warnings)
-                    other_team = pd.concat([other_team, p2_row.to_frame().T], ignore_index=True)
-                    team_with_both = pd.concat([team_with_both, swap_target.to_frame().T], ignore_index=True)
-                    
-                    logs.append(f"Separated **{p1} & {p2}**: Swapped {p2} with {swap_target['Full Name']}.")
-                    
-                    if p1_in_a and p2_in_a:
-                        df_a, df_b = team_with_both, other_team
-                    else:
-                        df_b, df_a = team_with_both, other_team
-
-    # Clean up
-    if 'Name_Lower' in df_a.columns: del df_a['Name_Lower']
-    if 'Name_Lower' in df_b.columns: del df_b['Name_Lower']
-
-    return df_a, df_b, logs
 
 # --- 2. MAIN APP INTERFACE ---
 st.title("🏒 Hockey Team Generator")
@@ -225,38 +150,149 @@ if uploaded_file is not None:
                     moved_names = ", ".join(converts['Full Name'].tolist())
                     st.info(f"Moved {len(converts)} player(s) from F to D: **{moved_names}**")
 
-        # --- 6. LIMITS & CUTS ---
+        # --- 6. PRE-ASSIGN RIVALS (NEW LOGIC) ---
+        # We assign them NOW, before the main draft, to ensure they are separated 
+        # without disrupting the scoring balance of the rest of the draft.
+        
+        pre_team_a = []
+        pre_team_b = []
+        rivalry_notes = []
+
+        # Helper to find and remove a player from the pools
+        def extract_player(name, pd_pool, pf_pool):
+            name_key = name.lower().strip()
+            # Check D
+            for idx, row in pd_pool.iterrows():
+                if row['Full Name'].lower().strip() == name_key:
+                    pd_pool = pd_pool.drop(idx)
+                    row['Position'] = 'D'
+                    return row, pd_pool, pf_pool
+            # Check F
+            for idx, row in pf_pool.iterrows():
+                if row['Full Name'].lower().strip() == name_key:
+                    pf_pool = pf_pool.drop(idx)
+                    row['Position'] = 'F'
+                    return row, pd_pool, pf_pool
+            return None, pd_pool, pf_pool
+
+        # Rival Pairs
+        rival_pairs = [
+            ("Mike Tonietto", "Jamie Devin"),
+            ("Mark Hicks", "Gary Fera")
+        ]
+
+        # Use an index to alternate which team gets the 'better' player first to balance pre-seeds
+        pair_index = 0 
+
+        for p1_name, p2_name in rival_pairs:
+            # Check existence in current pools
+            # We assume names are unique enough. 
+            # We do a 'dry run' check first to see if both exist
+            
+            p1_found = any(df['Full Name'].str.lower().str.strip() == p1_name.lower().strip() for idx, df in [pool_d, pool_f] for _, row in df.iterrows())
+            p2_found = any(df['Full Name'].str.lower().str.strip() == p2_name.lower().strip() for idx, df in [pool_d, pool_f] for _, row in df.iterrows())
+            
+            # Note: The above boolean check is slightly inefficient but safe. 
+            # Better to try extracting and putting back if not found? 
+            # Actually, let's just try to extract both.
+            
+            if True: # We just attempt extraction
+                p1_obj, pool_d, pool_f = extract_player(p1_name, pool_d, pool_f)
+                p2_obj, pool_d, pool_f = extract_player(p2_name, pool_d, pool_f)
+
+                if p1_obj is not None and p2_obj is not None:
+                    # BOTH are playing. Force Separate.
+                    
+                    # Sort by score to distribute fairly
+                    pair_objs = sorted([p1_obj, p2_obj], key=lambda x: x['Score'], reverse=True)
+                    higher = pair_objs[0]
+                    lower = pair_objs[1]
+                    
+                    # Alternate assignment to balance the "Seed" scores
+                    if pair_index % 2 == 0:
+                        pre_team_a.append(higher)
+                        pre_team_b.append(lower)
+                        rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> Red, {lower['Full Name']} -> White")
+                    else:
+                        pre_team_b.append(higher)
+                        pre_team_a.append(lower)
+                        rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> White, {lower['Full Name']} -> Red")
+                    
+                    pair_index += 1
+                    
+                else:
+                    # One or both missing. Put them back if we found one!
+                    if p1_obj is not None:
+                        if p1_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p1_obj.to_frame().T])
+                        else: pool_f = pd.concat([pool_f, p1_obj.to_frame().T])
+                    if p2_obj is not None:
+                        if p2_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p2_obj.to_frame().T])
+                        else: pool_f = pd.concat([pool_f, p2_obj.to_frame().T])
+
+        # --- 7. DRAFT THE REMAINDER ---
+        # Sort remaining pools again
         pool_d = pool_d.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
         pool_f = pool_f.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
 
-        selected_d = pool_d.head(target_d).copy()
-        selected_f = pool_f.head(target_f).copy()
-        cuts_d = pool_d.iloc[target_d:].copy()
-        cuts_f = pool_f.iloc[target_f:].copy()
+        # Determine how many slots are left to fill
+        # We subtract the pre-assigned players from the targets
+        pre_d_a = len([p for p in pre_team_a if p['Position'] == 'D'])
+        pre_f_a = len([p for p in pre_team_a if p['Position'] == 'F'])
+        
+        # We just grab everyone remaining. The snake draft handles the count.
+        # But we need to assign positions for display before drafting
+        selected_d = pool_d.head(target_d).copy() # Note: This logic caps total D. 
+        # If we already have D in pre-teams, we need to be careful not to over-draft.
+        # Actually, 'pool_d' only contains UNASSIGNED players now.
+        # So we should take (Total_Target - Assigned) from pool.
+        
+        total_pre_d = len([p for p in pre_team_a + pre_team_b if p['Position'] == 'D'])
+        total_pre_f = len([p for p in pre_team_a + pre_team_b if p['Position'] == 'F'])
+        
+        needed_d = max(0, target_d - total_pre_d)
+        needed_f = max(0, target_f - total_pre_f)
+        
+        selected_d = pool_d.head(needed_d).copy()
+        selected_f = pool_f.head(needed_f).copy()
+        
+        # Identify Cuts
+        cuts_d = pool_d.iloc[needed_d:].copy()
+        cuts_f = pool_f.iloc[needed_f:].copy()
 
         selected_d['Position'] = 'D'
         selected_f['Position'] = 'F'
 
-        # --- 7. DRAFT TEAMS ---
+        # Run Snake Draft on Remainder
         d_a, d_b = snake_draft(selected_d)
         f_a, f_b = snake_draft(selected_f)
 
-        team_a = pd.concat([d_a, f_a], ignore_index=True).sample(frac=1).reset_index(drop=True)
-        team_b = pd.concat([d_b, f_b], ignore_index=True).sample(frac=1).reset_index(drop=True)
+        # --- 8. COMBINE PRE-ASSIGNED + DRAFTED ---
+        # Convert pre-lists to dataframes
+        cols = df.columns # Use original columns
+        
+        if pre_team_a: df_pre_a = pd.DataFrame(pre_team_a, columns=cols)
+        else: df_pre_a = pd.DataFrame(columns=cols)
+            
+        if pre_team_b: df_pre_b = pd.DataFrame(pre_team_b, columns=cols)
+        else: df_pre_b = pd.DataFrame(columns=cols)
 
-        # --- 8. ENFORCE RIVALRIES ---
-        team_a, team_b, rivalry_logs = enforce_rivalries(team_a, team_b)
+        # Merge
+        team_a = pd.concat([df_pre_a, d_a, f_a], ignore_index=True)
+        team_b = pd.concat([df_pre_b, d_b, f_b], ignore_index=True)
+        
+        # Shuffle final result so the "Pre-assigned" players aren't always at the top of the list
+        team_a = team_a.sample(frac=1).reset_index(drop=True)
+        team_b = team_b.sample(frac=1).reset_index(drop=True)
 
         # --- 9. DISPLAY ---
         if st.button("Shuffle Teams Again"):
             st.rerun()
 
-        if rivalry_logs:
+        if rivalry_notes:
             st.divider()
-            for log in rivalry_logs:
-                st.success(f"⚖️ {log}")
+            for note in rivalry_notes:
+                st.success(f"⚖️ {note}")
 
-        # Recalculate Scores after potential swaps
         count_a, count_b = len(team_a), len(team_b)
         common_count = min(count_a, count_b)
         total_score_a = team_a['Score'].sum() if not team_a.empty else 0
