@@ -32,8 +32,9 @@ def snake_draft(players):
 def format_team_list(df, team_name):
     if df.empty: return f"{team_name} (0 players):\n"
     txt = f"{team_name} ({len(df)} players):\n"
+    # SORTING FOR EMAIL: Position (Asc), then Full Name (Asc)
     if 'Position' in df.columns and 'Full Name' in df.columns:
-        df_sorted = df.sort_values(by=['Position', 'Full Name'])
+        df_sorted = df.sort_values(by=['Position', 'Full Name'], ascending=[True, True])
         for _, row in df_sorted.iterrows():
             txt += f"- {row['Full Name']} ({row['Position']})\n"
     return txt
@@ -161,14 +162,14 @@ if uploaded_file is not None:
             matches_d = pd_pool[pd_pool['Full Name'].str.lower().str.strip() == name_key]
             if not matches_d.empty:
                 row = matches_d.iloc[0].copy()
-                row['Position'] = 'D' # Explicitly set position
+                row['Position'] = 'D'
                 pd_pool = pd_pool.drop(matches_d.index)
                 return row, pd_pool, pf_pool
             # Check F
             matches_f = pf_pool[pf_pool['Full Name'].str.lower().str.strip() == name_key]
             if not matches_f.empty:
                 row = matches_f.iloc[0].copy()
-                row['Position'] = 'F' # Explicitly set position
+                row['Position'] = 'F'
                 pf_pool = pf_pool.drop(matches_f.index)
                 return row, pd_pool, pf_pool
             return None, pd_pool, pf_pool
@@ -184,7 +185,6 @@ if uploaded_file is not None:
             p2_obj, pool_d, pool_f = extract_player(p2_name, pool_d, pool_f)
 
             if p1_obj is not None and p2_obj is not None:
-                # Both playing -> separate
                 pair_objs = sorted([p1_obj, p2_obj], key=lambda x: x['Score'], reverse=True)
                 higher, lower = pair_objs[0], pair_objs[1]
                 
@@ -198,7 +198,6 @@ if uploaded_file is not None:
                     rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} ({higher['Position']}) -> White, {lower['Full Name']} ({lower['Position']}) -> Red")
                 pair_index += 1
             else:
-                # Put back if one missing
                 if p1_obj is not None:
                     if p1_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p1_obj.to_frame().T])
                     else: pool_f = pd.concat([pool_f, p1_obj.to_frame().T])
@@ -210,7 +209,6 @@ if uploaded_file is not None:
         pool_d = pool_d.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
         pool_f = pool_f.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
 
-        # Count how many we already have
         total_pre_d = len([p for p in pre_team_a + pre_team_b if p['Position'] == 'D'])
         total_pre_f = len([p for p in pre_team_a + pre_team_b if p['Position'] == 'F'])
         
@@ -229,8 +227,7 @@ if uploaded_file is not None:
         d_a, d_b = snake_draft(selected_d)
         f_a, f_b = snake_draft(selected_f)
 
-        # --- 8. COMBINE ---
-        # Ensure 'Position' is in the columns list for the pre-assigned dataframe
+        # --- 8. COMBINE & SORT (Updated) ---
         final_cols = list(df.columns)
         if 'Position' not in final_cols:
             final_cols.append('Position')
@@ -245,8 +242,10 @@ if uploaded_file is not None:
         team_a = pd.concat([df_pre_a, d_a, f_a], ignore_index=True)
         team_b = pd.concat([df_pre_b, d_b, f_b], ignore_index=True)
         
-        team_a = team_a.sample(frac=1).reset_index(drop=True)
-        team_b = team_b.sample(frac=1).reset_index(drop=True)
+        # SORTING: Position (asc) then Full Name (asc)
+        # Note: 'D' comes before 'F' alphabetically, so ascending works perfectly.
+        team_a = team_a.sort_values(by=['Position', 'Full Name'], ascending=[True, True]).reset_index(drop=True)
+        team_b = team_b.sort_values(by=['Position', 'Full Name'], ascending=[True, True]).reset_index(drop=True)
 
         # --- 9. DISPLAY ---
         if st.button("Shuffle Teams Again"):
