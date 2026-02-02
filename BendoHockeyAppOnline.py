@@ -8,33 +8,24 @@ st.set_page_config(page_title="Hockey Team Balancer")
 
 def snake_draft(players):
     """Distributes players 1-by-1 in a Snake pattern (A, B, B, A)."""
-    # Reset index to ensure we can iterate purely by position 0, 1, 2...
     players = players.reset_index(drop=True)
     
     team_a_list = []
     team_b_list = []
     
-    # Iterate using simple range to avoid 'unpacking' errors
     for i in range(len(players)):
         player = players.iloc[i]
-        
-        # Pattern: A, B, B, A
         if i % 4 == 0 or i % 4 == 3:
             team_a_list.append(player)
         else:
             team_b_list.append(player)
             
-    # Convert lists back to DataFrames
     cols = players.columns
-    if not team_a_list: 
-        df_a = pd.DataFrame(columns=cols)
-    else: 
-        df_a = pd.DataFrame(team_a_list, columns=cols)
+    if not team_a_list: df_a = pd.DataFrame(columns=cols)
+    else: df_a = pd.DataFrame(team_a_list, columns=cols)
         
-    if not team_b_list: 
-        df_b = pd.DataFrame(columns=cols)
-    else: 
-        df_b = pd.DataFrame(team_b_list, columns=cols)
+    if not team_b_list: df_b = pd.DataFrame(columns=cols)
+    else: df_b = pd.DataFrame(team_b_list, columns=cols)
         
     return df_a, df_b
 
@@ -55,7 +46,6 @@ def get_top_n_score(df, n):
 st.title("🏒 Hockey Team Generator")
 st.write("Upload your Excel player sheet.")
 
-# File Uploader
 uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls', 'xlsm'])
 
 if uploaded_file is not None:
@@ -160,35 +150,29 @@ if uploaded_file is not None:
                     moved_names = ", ".join(converts['Full Name'].tolist())
                     st.info(f"Moved {len(converts)} player(s) from F to D: **{moved_names}**")
 
-        # --- 6. PRE-ASSIGN RIVALS (NEW LOGIC) ---
+        # --- 6. PRE-ASSIGN RIVALS ---
         pre_team_a = []
         pre_team_b = []
         rivalry_notes = []
 
-        # Helper to extract a single player row
         def extract_player(name, pd_pool, pf_pool):
             name_key = str(name).lower().strip()
-            
-            # Look in D Pool
+            # Check D
             matches_d = pd_pool[pd_pool['Full Name'].str.lower().str.strip() == name_key]
             if not matches_d.empty:
                 row = matches_d.iloc[0].copy()
-                row['Position'] = 'D'
-                # Drop from source using index
+                row['Position'] = 'D' # Explicitly set position
                 pd_pool = pd_pool.drop(matches_d.index)
                 return row, pd_pool, pf_pool
-            
-            # Look in F Pool
+            # Check F
             matches_f = pf_pool[pf_pool['Full Name'].str.lower().str.strip() == name_key]
             if not matches_f.empty:
                 row = matches_f.iloc[0].copy()
-                row['Position'] = 'F'
+                row['Position'] = 'F' # Explicitly set position
                 pf_pool = pf_pool.drop(matches_f.index)
                 return row, pd_pool, pf_pool
-                
             return None, pd_pool, pf_pool
 
-        # List of Rivals - Keep as strict list of tuples
         rival_pairs = [
             ("Mike Tonietto", "Jamie Devin"),
             ("Mark Hicks", "Gary Fera")
@@ -196,27 +180,25 @@ if uploaded_file is not None:
 
         pair_index = 0 
         for p1_name, p2_name in rival_pairs:
-            # We attempt extraction safely
             p1_obj, pool_d, pool_f = extract_player(p1_name, pool_d, pool_f)
             p2_obj, pool_d, pool_f = extract_player(p2_name, pool_d, pool_f)
 
             if p1_obj is not None and p2_obj is not None:
-                # BOTH are playing. Separate them.
+                # Both playing -> separate
                 pair_objs = sorted([p1_obj, p2_obj], key=lambda x: x['Score'], reverse=True)
                 higher, lower = pair_objs[0], pair_objs[1]
                 
-                # Alternate assignment to balance teams
                 if pair_index % 2 == 0:
                     pre_team_a.append(higher)
                     pre_team_b.append(lower)
-                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> Red, {lower['Full Name']} -> White")
+                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} ({higher['Position']}) -> Red, {lower['Full Name']} ({lower['Position']}) -> White")
                 else:
                     pre_team_b.append(higher)
                     pre_team_a.append(lower)
-                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> White, {lower['Full Name']} -> Red")
+                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} ({higher['Position']}) -> White, {lower['Full Name']} ({lower['Position']}) -> Red")
                 pair_index += 1
             else:
-                # If one is missing, put the other back if found
+                # Put back if one missing
                 if p1_obj is not None:
                     if p1_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p1_obj.to_frame().T])
                     else: pool_f = pd.concat([pool_f, p1_obj.to_frame().T])
@@ -224,11 +206,11 @@ if uploaded_file is not None:
                     if p2_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p2_obj.to_frame().T])
                     else: pool_f = pd.concat([pool_f, p2_obj.to_frame().T])
 
-        # --- 7. DRAFT THE REMAINDER ---
+        # --- 7. DRAFT REMAINDER ---
         pool_d = pool_d.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
         pool_f = pool_f.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
 
-        # Calculate remaining needs
+        # Count how many we already have
         total_pre_d = len([p for p in pre_team_a + pre_team_b if p['Position'] == 'D'])
         total_pre_f = len([p for p in pre_team_a + pre_team_b if p['Position'] == 'F'])
         
@@ -248,18 +230,21 @@ if uploaded_file is not None:
         f_a, f_b = snake_draft(selected_f)
 
         # --- 8. COMBINE ---
-        # Helper to turn list into DF
+        # Ensure 'Position' is in the columns list for the pre-assigned dataframe
+        final_cols = list(df.columns)
+        if 'Position' not in final_cols:
+            final_cols.append('Position')
+
         def list_to_df(lst, cols):
             if not lst: return pd.DataFrame(columns=cols)
             return pd.DataFrame(lst, columns=cols)
 
-        df_pre_a = list_to_df(pre_team_a, df.columns)
-        df_pre_b = list_to_df(pre_team_b, df.columns)
+        df_pre_a = list_to_df(pre_team_a, final_cols)
+        df_pre_b = list_to_df(pre_team_b, final_cols)
 
         team_a = pd.concat([df_pre_a, d_a, f_a], ignore_index=True)
         team_b = pd.concat([df_pre_b, d_b, f_b], ignore_index=True)
         
-        # Shuffle final
         team_a = team_a.sample(frac=1).reset_index(drop=True)
         team_b = team_b.sample(frac=1).reset_index(drop=True)
 
