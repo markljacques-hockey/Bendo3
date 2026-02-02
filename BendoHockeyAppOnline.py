@@ -8,23 +8,33 @@ st.set_page_config(page_title="Hockey Team Balancer")
 
 def snake_draft(players):
     """Distributes players 1-by-1 in a Snake pattern (A, B, B, A)."""
-    team_a, team_b = [], []
+    # Reset index to ensure we can iterate purely by position 0, 1, 2...
     players = players.reset_index(drop=True)
     
-    for i, (_, player) in enumerate(players.iterrows()):
+    team_a_list = []
+    team_b_list = []
+    
+    # Iterate using simple range to avoid 'unpacking' errors
+    for i in range(len(players)):
+        player = players.iloc[i]
+        
         # Pattern: A, B, B, A
         if i % 4 == 0 or i % 4 == 3:
-            team_a.append(player)
+            team_a_list.append(player)
         else:
-            team_b.append(player)
+            team_b_list.append(player)
             
-    # Return DataFrames
+    # Convert lists back to DataFrames
     cols = players.columns
-    if not team_a: df_a = pd.DataFrame(columns=cols)
-    else: df_a = pd.DataFrame(team_a, columns=cols)
+    if not team_a_list: 
+        df_a = pd.DataFrame(columns=cols)
+    else: 
+        df_a = pd.DataFrame(team_a_list, columns=cols)
         
-    if not team_b: df_b = pd.DataFrame(columns=cols)
-    else: df_b = pd.DataFrame(team_b, columns=cols)
+    if not team_b_list: 
+        df_b = pd.DataFrame(columns=cols)
+    else: 
+        df_b = pd.DataFrame(team_b_list, columns=cols)
         
     return df_a, df_b
 
@@ -151,101 +161,74 @@ if uploaded_file is not None:
                     st.info(f"Moved {len(converts)} player(s) from F to D: **{moved_names}**")
 
         # --- 6. PRE-ASSIGN RIVALS (NEW LOGIC) ---
-        # We assign them NOW, before the main draft, to ensure they are separated 
-        # without disrupting the scoring balance of the rest of the draft.
-        
         pre_team_a = []
         pre_team_b = []
         rivalry_notes = []
 
-        # Helper to find and remove a player from the pools
+        # Helper to extract a single player row
         def extract_player(name, pd_pool, pf_pool):
-            name_key = name.lower().strip()
-            # Check D
-            for idx, row in pd_pool.iterrows():
-                if row['Full Name'].lower().strip() == name_key:
-                    pd_pool = pd_pool.drop(idx)
-                    row['Position'] = 'D'
-                    return row, pd_pool, pf_pool
-            # Check F
-            for idx, row in pf_pool.iterrows():
-                if row['Full Name'].lower().strip() == name_key:
-                    pf_pool = pf_pool.drop(idx)
-                    row['Position'] = 'F'
-                    return row, pd_pool, pf_pool
+            name_key = str(name).lower().strip()
+            
+            # Look in D Pool
+            matches_d = pd_pool[pd_pool['Full Name'].str.lower().str.strip() == name_key]
+            if not matches_d.empty:
+                row = matches_d.iloc[0].copy()
+                row['Position'] = 'D'
+                # Drop from source using index
+                pd_pool = pd_pool.drop(matches_d.index)
+                return row, pd_pool, pf_pool
+            
+            # Look in F Pool
+            matches_f = pf_pool[pf_pool['Full Name'].str.lower().str.strip() == name_key]
+            if not matches_f.empty:
+                row = matches_f.iloc[0].copy()
+                row['Position'] = 'F'
+                pf_pool = pf_pool.drop(matches_f.index)
+                return row, pd_pool, pf_pool
+                
             return None, pd_pool, pf_pool
 
-        # Rival Pairs
+        # List of Rivals - Keep as strict list of tuples
         rival_pairs = [
             ("Mike Tonietto", "Jamie Devin"),
             ("Mark Hicks", "Gary Fera")
         ]
 
-        # Use an index to alternate which team gets the 'better' player first to balance pre-seeds
         pair_index = 0 
-
         for p1_name, p2_name in rival_pairs:
-            # Check existence in current pools
-            # We assume names are unique enough. 
-            # We do a 'dry run' check first to see if both exist
-            
-            p1_found = any(df['Full Name'].str.lower().str.strip() == p1_name.lower().strip() for idx, df in [pool_d, pool_f] for _, row in df.iterrows())
-            p2_found = any(df['Full Name'].str.lower().str.strip() == p2_name.lower().strip() for idx, df in [pool_d, pool_f] for _, row in df.iterrows())
-            
-            # Note: The above boolean check is slightly inefficient but safe. 
-            # Better to try extracting and putting back if not found? 
-            # Actually, let's just try to extract both.
-            
-            if True: # We just attempt extraction
-                p1_obj, pool_d, pool_f = extract_player(p1_name, pool_d, pool_f)
-                p2_obj, pool_d, pool_f = extract_player(p2_name, pool_d, pool_f)
+            # We attempt extraction safely
+            p1_obj, pool_d, pool_f = extract_player(p1_name, pool_d, pool_f)
+            p2_obj, pool_d, pool_f = extract_player(p2_name, pool_d, pool_f)
 
-                if p1_obj is not None and p2_obj is not None:
-                    # BOTH are playing. Force Separate.
-                    
-                    # Sort by score to distribute fairly
-                    pair_objs = sorted([p1_obj, p2_obj], key=lambda x: x['Score'], reverse=True)
-                    higher = pair_objs[0]
-                    lower = pair_objs[1]
-                    
-                    # Alternate assignment to balance the "Seed" scores
-                    if pair_index % 2 == 0:
-                        pre_team_a.append(higher)
-                        pre_team_b.append(lower)
-                        rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> Red, {lower['Full Name']} -> White")
-                    else:
-                        pre_team_b.append(higher)
-                        pre_team_a.append(lower)
-                        rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> White, {lower['Full Name']} -> Red")
-                    
-                    pair_index += 1
-                    
+            if p1_obj is not None and p2_obj is not None:
+                # BOTH are playing. Separate them.
+                pair_objs = sorted([p1_obj, p2_obj], key=lambda x: x['Score'], reverse=True)
+                higher, lower = pair_objs[0], pair_objs[1]
+                
+                # Alternate assignment to balance teams
+                if pair_index % 2 == 0:
+                    pre_team_a.append(higher)
+                    pre_team_b.append(lower)
+                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> Red, {lower['Full Name']} -> White")
                 else:
-                    # One or both missing. Put them back if we found one!
-                    if p1_obj is not None:
-                        if p1_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p1_obj.to_frame().T])
-                        else: pool_f = pd.concat([pool_f, p1_obj.to_frame().T])
-                    if p2_obj is not None:
-                        if p2_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p2_obj.to_frame().T])
-                        else: pool_f = pd.concat([pool_f, p2_obj.to_frame().T])
+                    pre_team_b.append(higher)
+                    pre_team_a.append(lower)
+                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> White, {lower['Full Name']} -> Red")
+                pair_index += 1
+            else:
+                # If one is missing, put the other back if found
+                if p1_obj is not None:
+                    if p1_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p1_obj.to_frame().T])
+                    else: pool_f = pd.concat([pool_f, p1_obj.to_frame().T])
+                if p2_obj is not None:
+                    if p2_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p2_obj.to_frame().T])
+                    else: pool_f = pd.concat([pool_f, p2_obj.to_frame().T])
 
         # --- 7. DRAFT THE REMAINDER ---
-        # Sort remaining pools again
         pool_d = pool_d.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
         pool_f = pool_f.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
 
-        # Determine how many slots are left to fill
-        # We subtract the pre-assigned players from the targets
-        pre_d_a = len([p for p in pre_team_a if p['Position'] == 'D'])
-        pre_f_a = len([p for p in pre_team_a if p['Position'] == 'F'])
-        
-        # We just grab everyone remaining. The snake draft handles the count.
-        # But we need to assign positions for display before drafting
-        selected_d = pool_d.head(target_d).copy() # Note: This logic caps total D. 
-        # If we already have D in pre-teams, we need to be careful not to over-draft.
-        # Actually, 'pool_d' only contains UNASSIGNED players now.
-        # So we should take (Total_Target - Assigned) from pool.
-        
+        # Calculate remaining needs
         total_pre_d = len([p for p in pre_team_a + pre_team_b if p['Position'] == 'D'])
         total_pre_f = len([p for p in pre_team_a + pre_team_b if p['Position'] == 'F'])
         
@@ -255,32 +238,28 @@ if uploaded_file is not None:
         selected_d = pool_d.head(needed_d).copy()
         selected_f = pool_f.head(needed_f).copy()
         
-        # Identify Cuts
         cuts_d = pool_d.iloc[needed_d:].copy()
         cuts_f = pool_f.iloc[needed_f:].copy()
 
         selected_d['Position'] = 'D'
         selected_f['Position'] = 'F'
 
-        # Run Snake Draft on Remainder
         d_a, d_b = snake_draft(selected_d)
         f_a, f_b = snake_draft(selected_f)
 
-        # --- 8. COMBINE PRE-ASSIGNED + DRAFTED ---
-        # Convert pre-lists to dataframes
-        cols = df.columns # Use original columns
-        
-        if pre_team_a: df_pre_a = pd.DataFrame(pre_team_a, columns=cols)
-        else: df_pre_a = pd.DataFrame(columns=cols)
-            
-        if pre_team_b: df_pre_b = pd.DataFrame(pre_team_b, columns=cols)
-        else: df_pre_b = pd.DataFrame(columns=cols)
+        # --- 8. COMBINE ---
+        # Helper to turn list into DF
+        def list_to_df(lst, cols):
+            if not lst: return pd.DataFrame(columns=cols)
+            return pd.DataFrame(lst, columns=cols)
 
-        # Merge
+        df_pre_a = list_to_df(pre_team_a, df.columns)
+        df_pre_b = list_to_df(pre_team_b, df.columns)
+
         team_a = pd.concat([df_pre_a, d_a, f_a], ignore_index=True)
         team_b = pd.concat([df_pre_b, d_b, f_b], ignore_index=True)
         
-        # Shuffle final result so the "Pre-assigned" players aren't always at the top of the list
+        # Shuffle final
         team_a = team_a.sample(frac=1).reset_index(drop=True)
         team_b = team_b.sample(frac=1).reset_index(drop=True)
 
@@ -323,7 +302,6 @@ if uploaded_file is not None:
             if not team_b.empty: st.dataframe(team_b[cols], hide_index=True)
             else: st.write("No players.")
 
-        # Cuts
         if not cuts_d.empty or not cuts_f.empty:
             st.divider()
             st.subheader("🚫 Undrafted Players")
