@@ -61,7 +61,6 @@ def get_birthday_message(players_df, bday_col):
     today = datetime.now()
     
     # CALCULATE FULL WEEK WINDOW (Mon 00:00 to Sun 23:59)
-    # This ensures that even if run on Friday, it catches the previous Monday.
     start_of_week = today - timedelta(days=today.weekday())
     start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
     
@@ -101,9 +100,16 @@ def get_birthday_message(players_df, bday_col):
 
     # Grammar logic for email
     names_str = " and ".join([", ".join(celebrants[:-1]), celebrants[-1]] if len(celebrants) > 2 else celebrants)
-    verb = "is" if len(celebrants) == 1 else "are"
     
-    msg = f"🎉 Congratulations to {names_str} who {verb} celebrating their birthday this week!\n\n"
+    # Dynamic Grammar: "is/birthday" vs "are/birthdays"
+    if len(celebrants) == 1:
+        verb = "is"
+        noun = "birthday"
+    else:
+        verb = "are"
+        noun = "birthdays"
+    
+    msg = f"🎉 Congratulations to {names_str} who {verb} celebrating their {noun} this week!\n\n"
     return msg, celebrants
 
 # --- 2. MAIN APP INTERFACE ---
@@ -169,14 +175,9 @@ if uploaded_file is not None:
         
         st.info(f"**Roster Strategy ({selected_sheet}):** Found {total_players} players. Aiming for **{target_f} Forwards** and **{target_d} Defensemen**.")
         
-        # --- BIRTHDAY DEBUGGER ---
+        # Birthday Debugger
         if bday_col:
-            # We pass the full original DF to check ALL birthdays, not just available ones
-            # (Or typically you only congratulate people who are playing? 
-            #  Usually "available" is better so you don't congratulate absent people.
-            #  Using 'available' dataframe here).
             msg_check, bday_names = get_birthday_message(available, bday_col)
-            
             with st.expander("🎂 Birthday Checker (Debug Info)", expanded=True):
                 # Calculate display window for user confidence
                 today = datetime.now()
