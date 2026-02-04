@@ -33,6 +33,7 @@ def snake_draft(players):
 def format_team_list(df, team_name):
     if df.empty: return f"{team_name} (0 players):\n"
     txt = f"{team_name} ({len(df)} players):\n"
+    # SORTING: Position (Asc), then Full Name (Asc)
     if 'Position' in df.columns and 'Full Name' in df.columns:
         df_sorted = df.sort_values(by=['Position', 'Full Name'], ascending=[True, True])
         for _, row in df_sorted.iterrows():
@@ -45,10 +46,7 @@ def get_top_n_score(df, n):
 
 def find_birthday_column(df):
     """Smart search for the birthday column."""
-    # 1. Try exact match from request
     if 'B-day' in df.columns: return 'B-day'
-    
-    # 2. Try case-insensitive variations
     for col in df.columns:
         clean_col = str(col).strip().lower()
         if clean_col in ['b-day', 'bday', 'birthday', 'birth date', 'dob']:
@@ -65,7 +63,6 @@ def get_birthday_message(players_df, bday_col):
     start_of_week = today - timedelta(days=today.weekday())
     end_of_week = start_of_week + timedelta(days=6)
     
-    # Reset times for accurate comparison
     start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_week = end_of_week.replace(hour=23, minute=59, second=59, microsecond=999999)
 
@@ -73,29 +70,21 @@ def get_birthday_message(players_df, bday_col):
 
     for _, row in players_df.iterrows():
         bday = row[bday_col]
-        
-        if pd.isna(bday) or str(bday).strip() == '':
-            continue
+        if pd.isna(bday) or str(bday).strip() == '': continue
             
         try:
-            # Handle standard datetime objects
             if isinstance(bday, (pd.Timestamp, datetime)):
-                # Replace year with current year to check month/day
                 try:
                     bday_this_year = bday.replace(year=today.year)
                 except ValueError:
-                    # Handle Feb 29 on non-leap years (shift to Mar 1)
                     bday_this_year = bday.replace(year=today.year, month=3, day=1)
                 
                 if start_of_week <= bday_this_year <= end_of_week:
                     celebrants.append(row['Full Name'])
-        except Exception:
-            continue
+        except Exception: continue
             
-    if not celebrants:
-        return "", []
+    if not celebrants: return "", []
 
-    # Grammar logic
     names_str = " and ".join([", ".join(celebrants[:-1]), celebrants[-1]] if len(celebrants) > 2 else celebrants)
     verb = "is" if len(celebrants) == 1 else "are"
     
@@ -110,22 +99,18 @@ uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls', 'xlsm
 
 if uploaded_file is not None:
     try:
-        # 1. Get Sheet Names
         xls = pd.ExcelFile(uploaded_file)
         sheet_names = xls.sheet_names
         selected_sheet = st.selectbox("Select the Sheet to use:", sheet_names)
         
-        # 2. Load Data
         df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=1)
         
-        # Required Columns
         required_cols = ['Availability', 'Reg/Spare', 'First_name', 'Last_name', '1st Choice', 'Score']
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
             st.error(f"Missing required columns in sheet '{selected_sheet}': {', '.join(missing)}")
             st.stop()
 
-        # Clean Data
         df['Availability'] = df['Availability'].astype(str).str.strip().str.upper()
         df['1st Choice'] = df['1st Choice'].astype(str).str.strip().str.upper()
         df['Full Name'] = df['First_name'].astype(str).str.strip() + ' ' + df['Last_name'].astype(str).str.strip()
@@ -140,19 +125,17 @@ if uploaded_file is not None:
         else:
             df['Email'] = df['Email'].fillna('').astype(str).str.strip()
             
-        # --- SMART BIRTHDAY COLUMN FINDER ---
         bday_col = find_birthday_column(df)
         if bday_col:
             df[bday_col] = pd.to_datetime(df[bday_col], errors='coerce')
         
-        # Filter Available
         available = df[df['Availability'].str.startswith('Y')].copy()
         
         if available.empty:
             st.error(f"No players marked as 'Y' or 'Yes' in sheet '{selected_sheet}'.")
             st.stop()
         
-        # --- 3. DYNAMIC TARGETS ---
+        # --- 3. TARGETS ---
         total_players = len(available)
         BASE_F, BASE_D, MIN_D_CRITICAL = 12, 8, 6
 
@@ -167,23 +150,15 @@ if uploaded_file is not None:
         
         st.info(f"**Roster Strategy ({selected_sheet}):** Found {total_players} players. Aiming for **{target_f} Forwards** and **{target_d} Defensemen**.")
         
-        # --- BIRTHDAY DEBUGGER (UI) ---
         if bday_col:
             msg_check, bday_names = get_birthday_message(available, bday_col)
             with st.expander("🎂 Birthday Checker (Debug Info)", expanded=True):
-                today = datetime.now()
-                start_w = (today - timedelta(days=today.weekday())).strftime('%Y-%m-%d')
-                end_w = (today - timedelta(days=today.weekday()) + timedelta(days=6)).strftime('%Y-%m-%d')
-                st.write(f"**Column Found:** `{bday_col}`")
-                st.write(f"**Current Week:** {start_w} to {end_w}")
                 if bday_names:
                     st.success(f"**Matches Found:** {', '.join(bday_names)}")
                 else:
-                    st.warning("No birthdays match this week (or dates are invalid). Check Excel date format.")
-        else:
-            st.warning("⚠️ Could not find a 'B-day' column. Please name column K 'B-day'.")
+                    st.warning("No birthdays match this week.")
 
-        # --- 4. RANDOMIZE & SORT ---
+        # --- 4. SORT POOLS ---
         available = available.sample(frac=1).reset_index(drop=True)
         available['Status_Rank'] = available['Reg/Spare'].apply(lambda x: 0 if str(x).strip().upper() == 'R' else 1)
         available = available.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
@@ -225,7 +200,7 @@ if uploaded_file is not None:
                     pool_f = pool_f.drop(converts.index)
                     st.info(f"Moved {len(converts)} player(s) from F to D: **{', '.join(converts['Full Name'])}**")
 
-        # --- 6. PRE-ASSIGN RIVALS ---
+        # --- 6. RIVALS ---
         pre_team_a = []
         pre_team_b = []
         rivalry_notes = []
@@ -272,7 +247,7 @@ if uploaded_file is not None:
                     if p2_obj['Position'] == 'D': pool_d = pd.concat([pool_d, p2_obj.to_frame().T])
                     else: pool_f = pd.concat([pool_f, p2_obj.to_frame().T])
 
-        # --- 7. DRAFT REMAINDER ---
+        # --- 7. DRAFT ---
         pool_d = pool_d.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
         pool_f = pool_f.sort_values(by=['Status_Rank', 'Score'], ascending=[True, False])
 
@@ -373,8 +348,6 @@ if uploaded_file is not None:
             recipients = [e for e in all_players['Email'].unique() if e != '' and pd.notna(e)]
             bcc_string = ",".join(recipients)
             
-            # Use Original Data to check birthdays (in case players were pre-assigned and cols lost)
-            # Actually, we preserve cols in list_to_df, but safer to check both
             birthday_msg, _ = get_birthday_message(all_players, bday_col)
             
             email_body = f"""{birthday_msg}Hello everyone,\n\nHere are the rosters for the upcoming game:\n\n{format_team_list(team_a, "RED TEAM")}\n{format_team_list(team_b, "WHITE TEAM")}\nKeep your sticks on the ice!"""
@@ -384,13 +357,24 @@ if uploaded_file is not None:
             safe_subject = urllib.parse.quote(subject_line)
             safe_body = urllib.parse.quote(email_body)
             safe_bcc = urllib.parse.quote(bcc_string)
+            
+            # 1. Standard mailto (Default)
             mailto_url = f"mailto:?bcc={safe_bcc}&subject={safe_subject}&body={safe_body}"
-            gmail_url = f"https://mail.google.com/mail/?view=cm&fs=1&bcc={safe_bcc}&su={safe_subject}&body={safe_body}"
+            # 2. Gmail Web (Desktop)
+            gmail_web_url = f"https://mail.google.com/mail/?view=cm&fs=1&bcc={safe_bcc}&su={safe_subject}&body={safe_body}"
+            # 3. Gmail App (iOS specific URL scheme)
+            # Note: We use triple slash ///co to ensure it triggers 'compose'
+            gmail_app_url = f"googlegmail:///co?bcc={safe_bcc}&subject={safe_subject}&body={safe_body}"
 
             if len(recipients) > 0:
-                col_email1, col_email2 = st.columns(2)
-                with col_email1: st.link_button("🚀 Open Default Email App", mailto_url)
-                with col_email2: st.link_button("📧 Draft in Gmail (Web)", gmail_url)
+                # Create 3 columns for 3 buttons
+                b1, b2, b3 = st.columns(3)
+                with b1:
+                    st.link_button("📱 Default App (Best)", mailto_url, help="Opens your default email app (Apple Mail, Outlook, Android Gmail)")
+                with b2:
+                    st.link_button("💻 Gmail (Web)", gmail_web_url, help="Opens Gmail in your browser")
+                with b3:
+                    st.link_button("🍎 Gmail App (iOS)", gmail_app_url, help="Specifically for iPhones/iPads to force the Gmail App")
             else: st.caption("No emails found to generate link.")
                 
     except Exception as e:
