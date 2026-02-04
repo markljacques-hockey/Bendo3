@@ -63,6 +63,7 @@ def get_birthday_message(players_df, bday_col):
     start_of_week = today - timedelta(days=today.weekday())
     end_of_week = start_of_week + timedelta(days=6)
     
+    # Reset times for accurate comparison
     start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_week = end_of_week.replace(hour=23, minute=59, second=59, microsecond=999999)
 
@@ -77,6 +78,7 @@ def get_birthday_message(players_df, bday_col):
                 try:
                     bday_this_year = bday.replace(year=today.year)
                 except ValueError:
+                    # Handle Feb 29 on non-leap years
                     bday_this_year = bday.replace(year=today.year, month=3, day=1)
                 
                 if start_of_week <= bday_this_year <= end_of_week:
@@ -99,10 +101,12 @@ uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls', 'xlsm
 
 if uploaded_file is not None:
     try:
+        # 1. SCAN FILE FOR SHEETS (This works for Monday, Wednesday, Friday, etc.)
         xls = pd.ExcelFile(uploaded_file)
         sheet_names = xls.sheet_names
         selected_sheet = st.selectbox("Select the Sheet to use:", sheet_names)
         
+        # 2. LOAD DATA
         df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, header=1)
         
         required_cols = ['Availability', 'Reg/Spare', 'First_name', 'Last_name', '1st Choice', 'Score']
@@ -111,6 +115,7 @@ if uploaded_file is not None:
             st.error(f"Missing required columns in sheet '{selected_sheet}': {', '.join(missing)}")
             st.stop()
 
+        # Clean Data
         df['Availability'] = df['Availability'].astype(str).str.strip().str.upper()
         df['1st Choice'] = df['1st Choice'].astype(str).str.strip().str.upper()
         df['Full Name'] = df['First_name'].astype(str).str.strip() + ' ' + df['Last_name'].astype(str).str.strip()
@@ -129,6 +134,7 @@ if uploaded_file is not None:
         if bday_col:
             df[bday_col] = pd.to_datetime(df[bday_col], errors='coerce')
         
+        # Check for 'Y' or 'Yes'
         available = df[df['Availability'].str.startswith('Y')].copy()
         
         if available.empty:
@@ -150,6 +156,7 @@ if uploaded_file is not None:
         
         st.info(f"**Roster Strategy ({selected_sheet}):** Found {total_players} players. Aiming for **{target_f} Forwards** and **{target_d} Defensemen**.")
         
+        # Birthday Debugger
         if bday_col:
             msg_check, bday_names = get_birthday_message(available, bday_col)
             with st.expander("🎂 Birthday Checker (Debug Info)", expanded=True):
@@ -358,23 +365,21 @@ if uploaded_file is not None:
             safe_body = urllib.parse.quote(email_body)
             safe_bcc = urllib.parse.quote(bcc_string)
             
-            # 1. Standard mailto (Default)
+            # 1. Standard mailto
             mailto_url = f"mailto:?bcc={safe_bcc}&subject={safe_subject}&body={safe_body}"
-            # 2. Gmail Web (Desktop)
+            # 2. Gmail Web
             gmail_web_url = f"https://mail.google.com/mail/?view=cm&fs=1&bcc={safe_bcc}&su={safe_subject}&body={safe_body}"
-            # 3. Gmail App (iOS specific URL scheme)
-            # Note: We use triple slash ///co to ensure it triggers 'compose'
+            # 3. Gmail App
             gmail_app_url = f"googlegmail:///co?bcc={safe_bcc}&subject={safe_subject}&body={safe_body}"
 
             if len(recipients) > 0:
-                # Create 3 columns for 3 buttons
                 b1, b2, b3 = st.columns(3)
                 with b1:
-                    st.link_button("📱 Default App (Best)", mailto_url, help="Opens your default email app (Apple Mail, Outlook, Android Gmail)")
+                    st.link_button("📱 Default App (Best)", mailto_url, help="Opens your default email app")
                 with b2:
                     st.link_button("💻 Gmail (Web)", gmail_web_url, help="Opens Gmail in your browser")
                 with b3:
-                    st.link_button("🍎 Gmail App (iOS)", gmail_app_url, help="Specifically for iPhones/iPads to force the Gmail App")
+                    st.link_button("🍎 Gmail App (iOS)", gmail_app_url, help="Specifically for iPhones/iPads")
             else: st.caption("No emails found to generate link.")
                 
     except Exception as e:
