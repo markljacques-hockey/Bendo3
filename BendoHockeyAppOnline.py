@@ -32,7 +32,7 @@ def snake_draft(players):
 def format_team_list(df, team_name):
     if df.empty: return f"{team_name} (0 players):\n"
     txt = f"{team_name} ({len(df)} players):\n"
-    # SORTING FOR EMAIL: Position (Asc), then Full Name (Asc)
+    # SORTING: Position (Asc), then Full Name (Asc)
     if 'Position' in df.columns and 'Full Name' in df.columns:
         df_sorted = df.sort_values(by=['Position', 'Full Name'], ascending=[True, True])
         for _, row in df_sorted.iterrows():
@@ -67,7 +67,8 @@ if uploaded_file is not None:
             st.stop()
 
         # Clean Data
-        df['Availability'] = df['Availability'].astype(str).str.strip().str.title()
+        # UPDATED: Convert to UPPERCASE so 'y' becomes 'Y'
+        df['Availability'] = df['Availability'].astype(str).str.strip().str.upper()
         df['1st Choice'] = df['1st Choice'].astype(str).str.strip().str.upper()
         df['Full Name'] = df['First_name'].astype(str).str.strip() + ' ' + df['Last_name'].astype(str).str.strip()
         
@@ -82,10 +83,11 @@ if uploaded_file is not None:
             df['Email'] = df['Email'].fillna('').astype(str).str.strip()
 
         # Filter Available
-        available = df[df['Availability'] == 'Yes'].copy()
+        # UPDATED: Checks if it starts with 'Y' (Handles "Y", "y", "Yes", "YES")
+        available = df[df['Availability'].str.startswith('Y')].copy()
         
         if available.empty:
-            st.error(f"No players marked as 'Yes' in sheet '{selected_sheet}'.")
+            st.error(f"No players marked as 'Y' or 'Yes' in sheet '{selected_sheet}'.")
             st.stop()
         
         # --- 3. DYNAMIC TARGET CALCULATION ---
@@ -227,7 +229,7 @@ if uploaded_file is not None:
         d_a, d_b = snake_draft(selected_d)
         f_a, f_b = snake_draft(selected_f)
 
-        # --- 8. COMBINE & SORT (Updated) ---
+        # --- 8. COMBINE & SORT ---
         final_cols = list(df.columns)
         if 'Position' not in final_cols:
             final_cols.append('Position')
@@ -243,7 +245,6 @@ if uploaded_file is not None:
         team_b = pd.concat([df_pre_b, d_b, f_b], ignore_index=True)
         
         # SORTING: Position (asc) then Full Name (asc)
-        # Note: 'D' comes before 'F' alphabetically, so ascending works perfectly.
         team_a = team_a.sort_values(by=['Position', 'Full Name'], ascending=[True, True]).reset_index(drop=True)
         team_b = team_b.sort_values(by=['Position', 'Full Name'], ascending=[True, True]).reset_index(drop=True)
 
