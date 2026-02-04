@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import urllib.parse
 import io
+from datetime import datetime, timedelta
 
 # --- 1. SETUP & HELPER FUNCTIONS ---
 st.set_page_config(page_title="Hockey Team Balancer")
@@ -32,7 +33,6 @@ def snake_draft(players):
 def format_team_list(df, team_name):
     if df.empty: return f"{team_name} (0 players):\n"
     txt = f"{team_name} ({len(df)} players):\n"
-    # SORTING: Position (Asc), then Full Name (Asc)
     if 'Position' in df.columns and 'Full Name' in df.columns:
         df_sorted = df.sort_values(by=['Position', 'Full Name'], ascending=[True, True])
         for _, row in df_sorted.iterrows():
@@ -42,6 +42,65 @@ def format_team_list(df, team_name):
 def get_top_n_score(df, n):
     if df.empty or n <= 0: return 0
     return df.sort_values(by='Score', ascending=False).head(n)['Score'].sum()
+
+def find_birthday_column(df):
+    """Smart search for the birthday column."""
+    # 1. Try exact match from request
+    if 'B-day' in df.columns: return 'B-day'
+    
+    # 2. Try case-insensitive variations
+    for col in df.columns:
+        clean_col = str(col).strip().lower()
+        if clean_col in ['b-day', 'bday', 'birthday', 'birth date', 'dob']:
+            return col
+    return None
+
+def get_birthday_message(players_df, bday_col):
+    """Checks for birthdays in the current week (Mon-Sun)."""
+    if not bday_col or bday_col not in players_df.columns:
+        return "", []
+        
+    today = datetime.now()
+    # Calculate Week Window (Monday to Sunday)
+    start_of_week = today - timedelta(days=today.weekday())
+    end_of_week = start_of_week + timedelta(days=6)
+    
+    # Reset times for accurate comparison
+    start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_week = end_of_week.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    celebrants = []
+
+    for _, row in players_df.iterrows():
+        bday = row[bday_col]
+        
+        if pd.isna(bday) or str(bday).strip() == '':
+            continue
+            
+        try:
+            # Handle standard datetime objects
+            if isinstance(bday, (pd.Timestamp, datetime)):
+                # Replace year with current year to check month/day
+                try:
+                    bday_this_year = bday.replace(year=today.year)
+                except ValueError:
+                    # Handle Feb 29 on non-leap years (shift to Mar 1)
+                    bday_this_year = bday.replace(year=today.year, month=3, day=1)
+                
+                if start_of_week <= bday_this_year <= end_of_week:
+                    celebrants.append(row['Full Name'])
+        except Exception:
+            continue
+            
+    if not celebrants:
+        return "", []
+
+    # Grammar logic
+    names_str = " and ".join([", ".join(celebrants[:-1]), celebrants[-1]] if len(celebrants) > 2 else celebrants)
+    verb = "is" if len(celebrants) == 1 else "are"
+    
+    msg = f"🎉 Congratulations to {names_str} who {verb} celebrating their birthday this week!\n\n"
+    return msg, celebrants
 
 # --- 2. MAIN APP INTERFACE ---
 st.title("🏒 Hockey Team Generator")
@@ -67,7 +126,6 @@ if uploaded_file is not None:
             st.stop()
 
         # Clean Data
-        # UPDATED: Convert to UPPERCASE so 'y' becomes 'Y'
         df['Availability'] = df['Availability'].astype(str).str.strip().str.upper()
         df['1st Choice'] = df['1st Choice'].astype(str).str.strip().str.upper()
         df['Full Name'] = df['First_name'].astype(str).str.strip() + ' ' + df['Last_name'].astype(str).str.strip()
@@ -81,16 +139,20 @@ if uploaded_file is not None:
             df['Email'] = ''
         else:
             df['Email'] = df['Email'].fillna('').astype(str).str.strip()
-
+            
+        # --- SMART BIRTHDAY COLUMN FINDER ---
+        bday_col = find_birthday_column(df)
+        if bday_col:
+            df[bday_col] = pd.to_datetime(df[bday_col], errors='coerce')
+        
         # Filter Available
-        # UPDATED: Checks if it starts with 'Y' (Handles "Y", "y", "Yes", "YES")
         available = df[df['Availability'].str.startswith('Y')].copy()
         
         if available.empty:
             st.error(f"No players marked as 'Y' or 'Yes' in sheet '{selected_sheet}'.")
             st.stop()
         
-        # --- 3. DYNAMIC TARGET CALCULATION ---
+        # --- 3. DYNAMIC TARGETS ---
         total_players = len(available)
         BASE_F, BASE_D, MIN_D_CRITICAL = 12, 8, 6
 
@@ -104,6 +166,22 @@ if uploaded_file is not None:
             target_f, target_d = BASE_F + add_to_f, BASE_D + add_to_d
         
         st.info(f"**Roster Strategy ({selected_sheet}):** Found {total_players} players. Aiming for **{target_f} Forwards** and **{target_d} Defensemen**.")
+        
+        # --- BIRTHDAY DEBUGGER (UI) ---
+        if bday_col:
+            msg_check, bday_names = get_birthday_message(available, bday_col)
+            with st.expander("🎂 Birthday Checker (Debug Info)", expanded=True):
+                today = datetime.now()
+                start_w = (today - timedelta(days=today.weekday())).strftime('%Y-%m-%d')
+                end_w = (today - timedelta(days=today.weekday()) + timedelta(days=6)).strftime('%Y-%m-%d')
+                st.write(f"**Column Found:** `{bday_col}`")
+                st.write(f"**Current Week:** {start_w} to {end_w}")
+                if bday_names:
+                    st.success(f"**Matches Found:** {', '.join(bday_names)}")
+                else:
+                    st.warning("No birthdays match this week (or dates are invalid). Check Excel date format.")
+        else:
+            st.warning("⚠️ Could not find a 'B-day' column. Please name column K 'B-day'.")
 
         # --- 4. RANDOMIZE & SORT ---
         available = available.sample(frac=1).reset_index(drop=True)
@@ -114,7 +192,6 @@ if uploaded_file is not None:
         pool_f = available[available['1st Choice'] == 'F'].copy()
 
         # --- 5. FILL GAPS ---
-        # Critical D
         if len(pool_d) < MIN_D_CRITICAL:
             needed = MIN_D_CRITICAL - len(pool_d)
             candidates = pool_f[pool_f['2nd Choice'] == 'D']
@@ -122,10 +199,8 @@ if uploaded_file is not None:
                 converts = candidates.head(needed)
                 pool_d = pd.concat([pool_d, converts])
                 pool_f = pool_f.drop(converts.index)
-                moved_names = ", ".join(converts['Full Name'].tolist())
-                st.warning(f"⚠️ Critical D Shortage: Moved {len(converts)} player(s) from F to D: **{moved_names}**")
+                st.warning(f"⚠️ Critical D Shortage: Moved {len(converts)} player(s) from F to D: **{', '.join(converts['Full Name'])}**")
         
-        # Fill Forwards
         if len(pool_f) < target_f:
             needed = target_f - len(pool_f)
             surplus_d = len(pool_d) - MIN_D_CRITICAL
@@ -136,10 +211,8 @@ if uploaded_file is not None:
                     converts = candidates.head(can_take)
                     pool_f = pd.concat([pool_f, converts])
                     pool_d = pool_d.drop(converts.index)
-                    moved_names = ", ".join(converts['Full Name'].tolist())
-                    st.info(f"Moved {len(converts)} player(s) from D to F: **{moved_names}**")
+                    st.info(f"Moved {len(converts)} player(s) from D to F: **{', '.join(converts['Full Name'])}**")
 
-        # Fill Defense
         if len(pool_d) < target_d:
             d_shortage = target_d - len(pool_d)
             surplus_f = len(pool_f) - target_f
@@ -150,8 +223,7 @@ if uploaded_file is not None:
                     converts = candidates.head(amount_to_move)
                     pool_d = pd.concat([pool_d, converts])
                     pool_f = pool_f.drop(converts.index)
-                    moved_names = ", ".join(converts['Full Name'].tolist())
-                    st.info(f"Moved {len(converts)} player(s) from F to D: **{moved_names}**")
+                    st.info(f"Moved {len(converts)} player(s) from F to D: **{', '.join(converts['Full Name'])}**")
 
         # --- 6. PRE-ASSIGN RIVALS ---
         pre_team_a = []
@@ -160,14 +232,12 @@ if uploaded_file is not None:
 
         def extract_player(name, pd_pool, pf_pool):
             name_key = str(name).lower().strip()
-            # Check D
             matches_d = pd_pool[pd_pool['Full Name'].str.lower().str.strip() == name_key]
             if not matches_d.empty:
                 row = matches_d.iloc[0].copy()
                 row['Position'] = 'D'
                 pd_pool = pd_pool.drop(matches_d.index)
                 return row, pd_pool, pf_pool
-            # Check F
             matches_f = pf_pool[pf_pool['Full Name'].str.lower().str.strip() == name_key]
             if not matches_f.empty:
                 row = matches_f.iloc[0].copy()
@@ -176,11 +246,7 @@ if uploaded_file is not None:
                 return row, pd_pool, pf_pool
             return None, pd_pool, pf_pool
 
-        rival_pairs = [
-            ("Mike Tonietto", "Jamie Devin"),
-            ("Mark Hicks", "Gary Fera")
-        ]
-
+        rival_pairs = [("Mike Tonietto", "Jamie Devin"), ("Mark Hicks", "Gary Fera")]
         pair_index = 0 
         for p1_name, p2_name in rival_pairs:
             p1_obj, pool_d, pool_f = extract_player(p1_name, pool_d, pool_f)
@@ -189,15 +255,14 @@ if uploaded_file is not None:
             if p1_obj is not None and p2_obj is not None:
                 pair_objs = sorted([p1_obj, p2_obj], key=lambda x: x['Score'], reverse=True)
                 higher, lower = pair_objs[0], pair_objs[1]
-                
                 if pair_index % 2 == 0:
                     pre_team_a.append(higher)
                     pre_team_b.append(lower)
-                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} ({higher['Position']}) -> Red, {lower['Full Name']} ({lower['Position']}) -> White")
+                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> Red, {lower['Full Name']} -> White")
                 else:
                     pre_team_b.append(higher)
                     pre_team_a.append(lower)
-                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} ({higher['Position']}) -> White, {lower['Full Name']} ({lower['Position']}) -> Red")
+                    rivalry_notes.append(f"Separated {p1_name} & {p2_name}: {higher['Full Name']} -> White, {lower['Full Name']} -> Red")
                 pair_index += 1
             else:
                 if p1_obj is not None:
@@ -231,8 +296,7 @@ if uploaded_file is not None:
 
         # --- 8. COMBINE & SORT ---
         final_cols = list(df.columns)
-        if 'Position' not in final_cols:
-            final_cols.append('Position')
+        if 'Position' not in final_cols: final_cols.append('Position')
 
         def list_to_df(lst, cols):
             if not lst: return pd.DataFrame(columns=cols)
@@ -244,7 +308,6 @@ if uploaded_file is not None:
         team_a = pd.concat([df_pre_a, d_a, f_a], ignore_index=True)
         team_b = pd.concat([df_pre_b, d_b, f_b], ignore_index=True)
         
-        # SORTING: Position (asc) then Full Name (asc)
         team_a = team_a.sort_values(by=['Position', 'Full Name'], ascending=[True, True]).reset_index(drop=True)
         team_b = team_b.sort_values(by=['Position', 'Full Name'], ascending=[True, True]).reset_index(drop=True)
 
@@ -309,7 +372,12 @@ if uploaded_file is not None:
         if not all_players.empty:
             recipients = [e for e in all_players['Email'].unique() if e != '' and pd.notna(e)]
             bcc_string = ",".join(recipients)
-            email_body = f"""Hello everyone,\n\nHere are the rosters for the upcoming game:\n\n{format_team_list(team_a, "RED TEAM")}\n{format_team_list(team_b, "WHITE TEAM")}\nKeep your sticks on the ice!"""
+            
+            # Use Original Data to check birthdays (in case players were pre-assigned and cols lost)
+            # Actually, we preserve cols in list_to_df, but safer to check both
+            birthday_msg, _ = get_birthday_message(all_players, bday_col)
+            
+            email_body = f"""{birthday_msg}Hello everyone,\n\nHere are the rosters for the upcoming game:\n\n{format_team_list(team_a, "RED TEAM")}\n{format_team_list(team_b, "WHITE TEAM")}\nKeep your sticks on the ice!"""
             st.text_area("Email Text (Draft Only):", value=email_body, height=300)
 
             subject_line = f"Bendo Hockey Lineups - {selected_sheet}"
