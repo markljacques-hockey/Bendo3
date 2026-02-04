@@ -54,39 +54,52 @@ def find_birthday_column(df):
     return None
 
 def get_birthday_message(players_df, bday_col):
-    """Checks for birthdays in the current week (Mon-Sun)."""
+    """Checks for birthdays in the current calendar week (Mon-Sun)."""
     if not bday_col or bday_col not in players_df.columns:
         return "", []
         
     today = datetime.now()
-    # Calculate Week Window (Monday to Sunday)
-    start_of_week = today - timedelta(days=today.weekday())
-    end_of_week = start_of_week + timedelta(days=6)
     
-    # Reset times for accurate comparison
+    # CALCULATE FULL WEEK WINDOW (Mon 00:00 to Sun 23:59)
+    # This ensures that even if run on Friday, it catches the previous Monday.
+    start_of_week = today - timedelta(days=today.weekday())
     start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    end_of_week = start_of_week + timedelta(days=6)
     end_of_week = end_of_week.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     celebrants = []
 
     for _, row in players_df.iterrows():
         bday = row[bday_col]
-        if pd.isna(bday) or str(bday).strip() == '': continue
+        
+        if pd.isna(bday) or str(bday).strip() == '':
+            continue
             
         try:
             if isinstance(bday, (pd.Timestamp, datetime)):
-                try:
-                    bday_this_year = bday.replace(year=today.year)
-                except ValueError:
-                    # Handle Feb 29 on non-leap years
-                    bday_this_year = bday.replace(year=today.year, month=3, day=1)
+                # Check current year, prev year, next year (handles New Year's weeks)
+                candidates = []
+                years_to_check = [today.year, today.year - 1, today.year + 1]
                 
-                if start_of_week <= bday_this_year <= end_of_week:
+                for y in years_to_check:
+                    try:
+                        candidates.append(bday.replace(year=y))
+                    except ValueError:
+                        # Handle Feb 29 on non-leap years (treat as Mar 1)
+                        candidates.append(bday.replace(year=y, month=3, day=1))
+                
+                # If the birthday (normalized to this year) falls in the Mon-Sun window
+                if any(start_of_week <= c <= end_of_week for c in candidates):
                     celebrants.append(row['Full Name'])
-        except Exception: continue
-            
-    if not celebrants: return "", []
 
+        except Exception:
+            continue
+            
+    if not celebrants:
+        return "", []
+
+    # Grammar logic for email
     names_str = " and ".join([", ".join(celebrants[:-1]), celebrants[-1]] if len(celebrants) > 2 else celebrants)
     verb = "is" if len(celebrants) == 1 else "are"
     
@@ -101,7 +114,7 @@ uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls', 'xlsm
 
 if uploaded_file is not None:
     try:
-        # 1. SCAN FILE FOR SHEETS (This works for Monday, Wednesday, Friday, etc.)
+        # 1. SCAN FILE FOR SHEETS
         xls = pd.ExcelFile(uploaded_file)
         sheet_names = xls.sheet_names
         selected_sheet = st.selectbox("Select the Sheet to use:", sheet_names)
@@ -156,14 +169,26 @@ if uploaded_file is not None:
         
         st.info(f"**Roster Strategy ({selected_sheet}):** Found {total_players} players. Aiming for **{target_f} Forwards** and **{target_d} Defensemen**.")
         
-        # Birthday Debugger
+        # --- BIRTHDAY DEBUGGER ---
         if bday_col:
+            # We pass the full original DF to check ALL birthdays, not just available ones
+            # (Or typically you only congratulate people who are playing? 
+            #  Usually "available" is better so you don't congratulate absent people.
+            #  Using 'available' dataframe here).
             msg_check, bday_names = get_birthday_message(available, bday_col)
+            
             with st.expander("🎂 Birthday Checker (Debug Info)", expanded=True):
+                # Calculate display window for user confidence
+                today = datetime.now()
+                s_week = today - timedelta(days=today.weekday())
+                e_week = s_week + timedelta(days=6)
+                
+                st.write(f"**Scanning Full Week:** {s_week.strftime('%A %b %d')} — {e_week.strftime('%A %b %d')}")
+                
                 if bday_names:
                     st.success(f"**Matches Found:** {', '.join(bday_names)}")
                 else:
-                    st.warning("No birthdays match this week.")
+                    st.warning("No birthdays found for this Mon-Sun window among playing roster.")
 
         # --- 4. SORT POOLS ---
         available = available.sample(frac=1).reset_index(drop=True)
@@ -355,6 +380,7 @@ if uploaded_file is not None:
             recipients = [e for e in all_players['Email'].unique() if e != '' and pd.notna(e)]
             bcc_string = ",".join(recipients)
             
+            # Use Original Data to check birthdays
             birthday_msg, _ = get_birthday_message(all_players, bday_col)
             
             email_body = f"""{birthday_msg}Hello everyone,\n\nHere are the rosters for the upcoming game:\n\n{format_team_list(team_a, "RED TEAM")}\n{format_team_list(team_b, "WHITE TEAM")}\nKeep your sticks on the ice!"""
